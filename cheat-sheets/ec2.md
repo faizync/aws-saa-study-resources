@@ -15,7 +15,7 @@
 | Feature | What It Is |
 |---|---|
 | **AMI** | Reusable template (OS + apps) |
-| **Instance Types** | t/m = General, c = Compute, r/x/z = Memory, d/h/i = Storage, f/g/p/trn/inf = Accelerated |
+| **Instance Types** | t/m = General, c = Compute, r/x/z/u = Memory, d/h/i = Storage, f/g/p/trn/inf/dl/vt = Accelerated, hpc = HPC |
 | **Key Pairs** | Secure login credentials |
 | **Security Groups** | Virtual firewall (instance level) |
 | **Elastic IP** | Static public IPv4 address |
@@ -51,14 +51,16 @@
 |---|---|---|
 | **Boot time** | < 1 minute | < 5 minutes |
 | **Root size limit** | 64 TiB | 10 GiB |
-| **Data persistence** | Survives stop | Deleted on termination |
+| **Data persistence** | Survives stop | Deleted on termination/failure |
 | **Stopped state** | ✅ Supported | ❌ Not supported |
 | **Modifications** | Type, kernel, RAM disk, user data (while stopped) | Fixed for life |
 | **Charges** | Instance + EBS + snapshot (S3) | Instance + S3 |
+| **OS support** | Linux + Windows | Linux only (**Windows does NOT support instance store root**) |
 
 - Can **replace root volume** of running instance (from: initial state, snapshot, or AMI)
 - EBS root volume **deleted by default** on termination
 - Can now launch **encrypted EBS instance directly from unencrypted AMI**
+- AWS recommends EBS-backed AMIs — launch faster and use persistent storage
 
 ---
 
@@ -88,8 +90,8 @@
 | Model | Key Facts |
 |---|---|
 | **On-Demand** | Pay per second, no commitment |
-| **Reserved (Standard)** | Up to **60% off**, 1 or 3 years, can sell in RI Marketplace |
-| **Reserved (Convertible)** | Up to **54% off**, can exchange for different attributes, **cannot** sell in RI Marketplace |
+| **Reserved (Standard)** | Up to **72% off**, 1 or 3 years, can sell in RI Marketplace |
+| **Reserved (Convertible)** | Up to **66% off**, can exchange for different attributes, **cannot** sell in RI Marketplace |
 | **Savings Plans** | Up to **72% off**, commit to $/hour usage, covers EC2 + Fargate + Lambda |
 | **Spot** | Up to **90% off**, can be interrupted by AWS |
 | **Dedicated Host** | Pay per physical host; BYOL support |
@@ -112,10 +114,11 @@
 - **Rebalance Recommendation** — signal that instance is at elevated risk of interruption
 
 #### Spot Allocation Strategies
-- **LowestPrice** — from cheapest pool (default)
-- **Diversified** — spread across all pools
-- **CapacityOptimized** — from pool with most available capacity
-- **InstancePoolsToUseCount** — spread across N pools (used with LowestPrice)
+- **PriceCapacityOptimized** — best of price + capacity (AWS **recommended** for most workloads)
+- **CapacityOptimized** — from pool with most available capacity (lowest interruption risk)
+- **LowestPrice** — from cheapest pool (**not recommended** — highest interruption risk)
+- **Diversified** — spread across all pools (Spot Fleet only)
+- **InstancePoolsToUseCount** — spread across N pools (used with LowestPrice only)
 
 ### Capacity Reservations
 - No 1 or 3-year commitment needed
@@ -217,11 +220,13 @@
 
 - Metadata URL: `http://169.254.169.254/latest/meta-data/`
 - User Data URL: `http://169.254.169.254/latest/user-data`
+- IPv6 IMDS endpoint: `http://[fd00:ec2::254]` (Nitro-based instances only)
 - **NOT** protected by cryptographic methods
+- **IMDSv2** (recommended) — session-oriented, requires token via PUT request first; more secure than IMDSv1
 - User data types: **shell scripts** and **cloud-init directives**
-- User data limit: **16 KB**
-- Modifying user data while stopped → **NOT executed on restart**
-- Instance **tags** accessible from metadata
+- User data limit: **16 KB** (raw, before base64 encoding) ✅ confirmed official docs
+- Modifying user data while stopped → **NOT executed on restart** (Linux); Windows can be configured to run on restart
+- Instance **tags** accessible from metadata (must be explicitly enabled)
 - ASG instances → metadata includes **target lifecycle state**
 
 ---
@@ -305,10 +310,17 @@
 
 ## 🧠 EC2 Hibernation
 - Saves **in-memory (RAM) state** to root EBS volume, then shuts down
-- Requirements: **encrypted AMI + encrypted root EBS volume**
-- Available for: On-Demand and Reserved Instances (M3/M4/M5, C3/C4/C5, R3/R4/R5, Amazon Linux, Ubuntu 18.04 LTS)
+- Requirements: **encrypted root EBS volume** (EBS encryption by default, or single-step encryption at launch)
+- Root EBS volume must be large enough to store RAM contents
+- Supported instance families include: **M3–M8, T2–T4g, C3–C8, R3–R8, I3, I3en** and many more current gen
+- Supported OS: Amazon Linux, Amazon Linux 2, AL2023, Ubuntu (18.04+), Windows Server (2012+), and others
+- RAM limits: **Linux → max 150 GiB**, **Windows → max 16 GiB**
+- Must be **enabled at launch** — cannot enable on existing running/stopped instance
+- **Cannot hibernate** instances in Auto Scaling groups or used by ECS
+- **Cannot hibernate** instances configured with UEFI Secure Boot
 - While hibernated: pay only for **EBS + Elastic IPs** (no hourly instance charge)
 - Resume using: **start-instances** command (same as normal start)
+- Can hibernate for up to **60 days**
 
 ---
 
@@ -338,4 +350,4 @@
 
 ---
 
-*Last verified against AWS official docs — June 2026*
+*✅ All points verified against official AWS documentation (docs.aws.amazon.com) — June 2026*
