@@ -27,6 +27,15 @@
 
 ---
 
+## 📝 My Cheat Sheets
+> Summarized revision notes, verified against official AWS docs — great for quick revision before the exam.
+
+| # | Service | Cheat Sheet |
+|---|---------|-------------|
+| 1 | 🖥️ Amazon EC2 | [View Notes](./cheat-sheets/ec2.md) |
+
+---
+
 ## 1. 🖥️ Core Compute
 
 > EC2, Lambda, Elastic Beanstalk, and other compute services.
