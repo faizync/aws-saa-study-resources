@@ -33,7 +33,7 @@
 | # | Service | Cheat Sheet |
 |---|---------|-------------|
 | 1 | 🖥️ Amazon EC2 | [View Notes](./cheat-sheets/ec2.md) |
-| 2 | ⚡ AWS Lambda | [View Notes](./cheat-sheets/lambda.md) |
+| 2 | 🌱 AWS Elastic Beanstalk | [View Notes](./cheat-sheets/elastic-beanstalk.md) |
 
 ---
 
