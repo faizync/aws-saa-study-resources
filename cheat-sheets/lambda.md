@@ -1,213 +1,260 @@
-# ⚡ AWS Lambda — SAA-C03 Cheat Sheet
-> Verified against official AWS docs (docs.aws.amazon.com/lambda) — June 2026
+# ⚡ AWS Lambda — Cheat Sheet (SAA-C03)
+
+> **What it is:** A serverless, event-driven compute service that runs your code in response to events and fully manages the servers for you — you upload code, it runs and scales automatically, and you pay only while it runs.
+
+> ⚠️ **Source freshness:** The Tutorials Dojo source was last updated **Dec 15, 2025** (recent). It includes the **new "Lambda Managed Instances"** feature, which is newer than most exam pools — likely *not* tested yet on SAA-C03. Treat it as bonus context. Want me to verify the Managed Instances details against current AWS docs before you rely on them?
 
 ---
 
-## 🔑 What is Lambda?
-- **Serverless, event-driven** compute — runs code in response to events, no server management
-- You pay only for **requests + execution duration** (billed per 1ms)
-- Functions are **stateless** — no affinity to any underlying server
-- Scales **horizontally and automatically** — spins up as many instances as needed
-- Code deployed as **ZIP packages** (up to 250 MB unzipped) or **container images** (up to 10 GB)
+## 1. The Big Picture (memorize these first)
+
+| Trait | Detail | Plain-English meaning |
+|-------|--------|-----------------------|
+| **Serverless** | No servers to provision/patch | You only manage code; AWS owns the machine |
+| **Event-driven** | Runs in response to an event | Something happens → your function fires |
+| **Stateless** | No affinity to any server | Don't store data in the function; it forgets between runs |
+| **Auto-scales horizontally** | Spins up as many instances as needed, from zero | Traffic spike = more copies automatically, no config |
+| **Pay-per-use** | Billed per request + per **1 ms** of duration | No idle cost — quiet function = ~$0 |
+| **Runs on** | Firecracker **microVMs** | Tiny, fast, secure mini-VMs that boot in ms |
+| **Compliance** | SOC, HIPAA, PCI, ISO | Safe for regulated workloads |
+
+**Easy way to remember Lambda's identity:** *"Code that wakes up on an event, does one job, and goes back to sleep — and you're billed by the millisecond."*
 
 ---
 
-## 🧩 Key Components
+## 2. Hard Limits 🔒 (classic exam fodder — know the exact numbers)
 
-| Component | What it does |
-|-----------|-------------|
-| **Function** | Your code + config — processes an event and returns a response |
-| **Execution Environment** | Secure, isolated Firecracker micro-VM where your function runs |
-| **Runtime** | Sits between Lambda service and your code — relays events and responses |
-| **Environment Variables** | Key-value config (DB strings, API keys). Always **encrypted at rest**, optionally in transit |
-| **Layers** | ZIP archives with shared libraries/runtimes — keeps deployment packages small |
-| **Event Source** | AWS service or custom app that triggers the function |
-| **Log Streams** | Auto-sent to CloudWatch; add custom logging with annotations |
+| Limit | Value | Trap / note |
+|-------|-------|-------------|
+| **Timeout (max)** | **15 minutes** | #1 trap: long jobs (>15 min) ❌ need Fargate/Batch/EC2, not Lambda |
+| **Memory** | **128 MB – 10 GB** | CPU, network, I/O scale *with* memory (more memory = more CPU) |
+| **/tmp ephemeral storage** | **512 MB – 10 GB** | Temporary scratch disk, wiped between cold starts |
+| **Deployment package (ZIP)** | 50 MB zipped (direct), 250 MB unzipped | Too big? → use **Layers** or **S3** |
+| **Deployment package (container image)** | up to **10 GB** | Use ECR-hosted image for big dependencies |
+| **Async payload** | up to **256 KB** | Asynchronous invoke event size cap |
+| **Event source mapping batch payload** | **6 MB** | One of the triggers that flushes a batch (below) |
 
----
+> **Memory ↔ CPU link is a favorite trick:** You can't set CPU directly. To make a function faster, **raise the memory** — CPU rises proportionally.
 
-## 💻 Supported Runtimes
-Node.js, Python, Java, C# (.NET), Go, Ruby, PowerShell
-
-> **Custom runtimes** also supported via the Lambda Runtime API (bring any language)
+**Supported languages (natively):** Node.js, Python, Java, C#/.NET, Go, Ruby, PowerShell.
+**Architectures:** x86 and **Graviton2** (ARM, cheaper/efficient).
 
 ---
 
-## ⚙️ Function Configuration Limits
+## 3. Invocation Types — Synchronous vs Asynchronous ⭐ (HIGH-VALUE, heavily tested)
 
-| Setting | Limit |
-|---------|-------|
-| Memory | 128 MB – 10,240 MB (10 GB) |
-| Ephemeral storage (/tmp) | 512 MB – 10,240 MB (10 GB) |
-| Execution timeout | 15 minutes max |
-| Deployment package (ZIP, unzipped) | 250 MB |
-| Container image | 10 GB |
-| Sync payload limit | 6 MB |
-| Async payload limit | 256 KB |
+This is the single most testable Lambda concept. Memorize which service uses which.
 
-- CPU, network, and I/O scale **proportionally to memory** — more memory = more CPU
-- **Versions**: snapshot of function state, appended as `:version-number` to ARN
-- **Aliases**: human-readable pointer to a version (e.g., `MyAlias`)
+| | **Synchronous** | **Asynchronous** |
+|---|---|---|
+| **Behavior** | Caller waits for the result | Event dropped in an internal queue; returns immediately |
+| **Response** | Returns the function's result | Returns **202 Accepted** right away |
+| **What 202 means** | n/a | "I queued it" — does **NOT** mean it succeeded |
+| **Use case** | Real-time request/response | Background work: batch, video encoding, order processing |
+| **Payload cap** | — | **256 KB** |
 
----
+**Who invokes Lambda SYNCHRONOUSLY** (caller waits):
+- Amazon **API Gateway**
+- **Application Load Balancer (ALB)**
+- Amazon **Cognito**
+- Amazon **Data Firehose**
+- Amazon **CloudFront (Lambda@Edge)**
 
-## 📞 Invocation Types
+**Who invokes Lambda ASYNCHRONOUSLY** (fire-and-forget):
+- Amazon **S3**
+- Amazon **CloudWatch Logs**
+- Amazon **EventBridge**
+- **AWS Config**, **CloudFormation**, **CodeCommit**
+- API Gateway *can* be async by setting `Event` in the `X-Amz-Invocation-Type` header (non-proxy integration)
 
-### Synchronous (Lambda waits and returns result)
-Used when caller needs the response immediately.
+> **Memory hook:** *"If a human/client is waiting for an answer → synchronous (API GW, ALB, CloudFront). If a system event just happened and nobody's waiting → asynchronous (S3, EventBridge, CloudWatch Logs)."*
 
-Common triggers:
-- Amazon API Gateway
-- Application Load Balancer (ALB)
-- Amazon Cognito
-- Amazon CloudFront (Lambda@Edge)
-- Amazon Data Firehose
-
-### Asynchronous (Lambda queues the event, returns 202 immediately)
-Used for background/long-latency work. Lambda retries on failure.
-- Returns **202 Accepted** — does NOT mean the function succeeded
-- Max payload: **256 KB**
-- Used for: batch jobs, video encoding, order processing
-
-Common triggers:
-- Amazon S3
-- Amazon SNS
-- Amazon EventBridge
-- Amazon CloudWatch Logs
-- AWS CloudFormation, Config, CodeCommit
+> 🪤 **Trap:** API Gateway is the tricky one — it's **synchronous by default** but can be made **asynchronous** via the invocation-type header. If a question mentions that header, the answer flips to async.
 
 ---
 
-## 🔗 Event Source Mapping
-Reads from a **queue or stream** and synchronously invokes Lambda. Lambda polls the source for you.
+## 4. Event Source Mapping (polling-based triggers) ⭐
 
-Function is invoked when:
-- Batch size is reached
-- Max batching window elapsed
-- Total payload hits 6 MB
+**Plain English:** A built-in poller that *reads from a queue/stream for you* and then invokes your function synchronously with a batch of records. You don't write the polling loop.
 
-Supported sources:
-- Amazon Kinesis Data Streams
-- Amazon DynamoDB Streams
-- Amazon SQS
-- Amazon MQ
-- Amazon MSK (Managed Streaming for Kafka)
-- Self-managed Apache Kafka
+- Used for **stream/queue** sources (not S3/EventBridge — those push directly).
+- Supports **event filtering** → process only relevant events = fewer invocations = **saves money**.
+- A batch is sent to your function when **any one** of these is hit:
+  - **Batch size** reached, **OR**
+  - **Maximum batching window** reached, **OR**
+  - **Total payload = 6 MB**
 
-> 💡 You can apply **event filtering** to only process relevant events — saves cost
+**Services that use Event Source Mapping:**
+- Amazon **Kinesis**
+- Amazon **DynamoDB** (Streams)
+- Amazon **SQS**
+- Amazon **MQ**
+- Amazon **MSK** (Managed Kafka) + self-managed Apache Kafka
 
----
-
-## 🔄 Concurrency
-
-| Type | What it does |
-|------|-------------|
-| **Reserved Concurrency** | Guarantees a minimum level for a function; caps its maximum — no other function can use this allocation |
-| **Provisioned Concurrency** | Pre-initialises execution environments so there's zero cold start latency on invocation |
-
-- Default account concurrency limit: **1,000 concurrent executions** (can be increased via support)
-- Scaling rate: **1,000 new execution environments per 10 seconds** *(doubled from 500 in 2025)*
+> **Easy way to remember:** *Event Source Mapping = "Lambda pulls" (streams/queues). Direct triggers like S3/EventBridge = "they push."*
 
 ---
 
-## 🌐 Lambda Function URL
-- Creates a **dedicated HTTPS endpoint** for your function — no API Gateway needed
+## 5. Concurrency Management ⭐ (commonly confused pair)
+
+**Concurrency** = number of function instances running *at the same time*. Each in-flight request = 1 concurrency unit.
+
+| Type | What it does | When to pick | Analogy |
+|------|--------------|--------------|---------|
+| **Reserved Concurrency** | **Guarantees** a function a slice of concurrency **and caps** its max | Protect a critical function, or stop one function from starving others | "Reserved parking spots — always yours, but you can't exceed them" |
+| **Provisioned Concurrency** | Pre-initializes instances so they're **warm** and ready | Need **consistent low latency**, avoid cold starts (e.g. predictable spikes) | "Engines kept running so there's no startup delay" |
+
+> 🪤 **Trap — don't mix these up:**
+> - **Reserved** = a *quota* (guarantee + ceiling), about **capacity allocation**. Free.
+> - **Provisioned** = pre-**warmed** instances, about **killing cold-start latency**. **Costs extra.**
+> - If the question says *"reduce/eliminate cold start latency"* → **Provisioned Concurrency** (or SnapStart for Java/Python/.NET).
+> - If it says *"ensure a function always has capacity"* / *"limit a function's max concurrency"* → **Reserved Concurrency.**
+
+---
+
+## 6. Components of a Lambda Application
+
+| Component | What it is | Plain English |
+|-----------|-----------|----------------|
+| **Function** | Your code that runs | The actual program |
+| **Execution environment** | Secure isolated microVM | The sandbox your code runs in |
+| **Runtime** | Language layer between Lambda & code | The translator that relays events/responses |
+| **Environment variables** | Key-value config (DB strings, API keys) | Settings injected at runtime; **always encrypted at rest** |
+| **Layers** | ZIP of libs/custom runtime/deps | Shared "add-on packs" to keep deployment package small |
+| **Event source** | Service that triggers the function | The thing that pushes the "go" button |
+| **Downstream resources** | Services the function calls | What the function talks to after it fires |
+| **Log streams** | Custom logging into CloudWatch | Your own print statements for debugging |
+
+### Versions & Aliases (know the ARN formats — tested verbatim)
+- **Version** = immutable snapshot of the function at a point in time. Publishing appends a number:
+  `arn:aws:lambda:us-east-2:123456789123:function:my-function:1`
+- **Alias** = a friendly **pointer** to a version (e.g. `prod`, `dev`). Lets you shift traffic without changing callers:
+  `arn:aws:lambda:us-east-2:123456789123:function:my-function:MyAlias`
+
+> **Analogy:** *Version = a saved git commit (frozen). Alias = a branch name/pointer you can move to a different commit.*
+
+### Layers vs big packages — deploying external dependencies
+If your code needs external libs/SDKs:
+1. Put dependencies in your app folder → 2. ZIP it → 3. Upload to Lambda (directly or via **S3**).
+**Better practice:** move heavy/unchanging deps into a **Layer** so your function package stays small and modular.
+
+---
+
+## 7. Lambda Function URL
+
+**Plain English:** A built-in **HTTPS endpoint** for your function — call it directly over the web, **no API Gateway needed**.
+
 - Format: `https://<url-id>.lambda-url.<region>.on.aws`
-- Static — doesn't change once created
-- **Dual-stack** (IPv4 + IPv6)
-- Can be invoked via browser, CURL, Postman, or any HTTP client
+- **Static** — doesn't change once created.
+- **Dual-stack** — supports IPv4 **and** IPv6.
+- Invoke via browser, curl, Postman, any HTTP client.
+- **Public internet only** — ❌ cannot be reached via PrivateLink/VPC endpoints.
+- Uses **resource-based policies**; supports **CORS** to whitelist origins.
+- Applies only to a function **alias** or the **`$LATEST`** unpublished version — **not** to other specific versions.
 
-**Authentication types:**
+**Two auth types:**
+| Auth type | Meaning |
+|-----------|---------|
+| **AWS_IAM** | Only IAM users/roles with `lambda:InvokeFunctionUrl` permission can call it |
+| **NONE** | Anyone with the URL can invoke it (public, no AWS account needed) |
 
-| Type | Who can invoke |
-|------|---------------|
-| `AWS_IAM` | Only IAM users/roles with explicit permission |
-| `NONE` | Anyone with the URL (public) |
-
-- Can be applied to any **alias** or **$LATEST** version — NOT to other specific versions
-- Accessible via **public internet only** — NOT via VPC Endpoints (PrivateLink)
-- Supports CORS configuration to whitelist allowed origins
-
----
-
-## 🔒 Lambda in a VPC
-- By default Lambda runs in AWS-managed infrastructure (outside your VPC)
-- You can enable VPC access by providing **subnet IDs** and **security group IDs**
-- Lambda creates **Elastic Network Interfaces (ENIs)** to connect securely to private resources (RDS, EC2, etc.)
-- Can mount **Amazon EFS** for shared persistent storage across functions
+> 🪤 **Trap:** Function URL = quick public HTTPS. If a question needs **throttling, API keys, request validation, usage plans, or private access** → that's **API Gateway**, not a Function URL.
 
 ---
 
-## 🌍 Lambda@Edge
-- Runs Lambda functions **at CloudFront edge locations** — closer to the user
-- Triggered at 4 CloudFront event points:
+## 8. Lambda in a VPC
 
-| Event | When it fires |
-|-------|--------------|
-| Viewer Request | After CloudFront receives request from viewer |
-| Origin Request | Before CloudFront forwards request to origin |
-| Origin Response | After CloudFront receives response from origin |
-| Viewer Response | Before CloudFront forwards response to viewer |
+- By default Lambda runs in an AWS-managed VPC (secure, but no access to your private resources).
+- To reach private resources (RDS, EC2, ElastiCache), give Lambda **VPC subnet IDs + security group IDs**.
+- Lambda then creates **Elastic Network Interfaces (ENIs)** to connect into your VPC securely.
 
-> Use cases: A/B testing, URL rewrites, auth at the edge, HTTP header manipulation
+> **Easy way to remember:** *"Lambda needs subnet + security group to step inside your VPC; it builds an ENI as its doorway."*
 
 ---
 
-## ⚡ Lambda SnapStart
-- Speeds up **cold starts** by taking a snapshot of the initialized execution environment
-- Restores from snapshot instead of re-initializing — much faster startup
-- Originally Java only; **now available for Python (python3.12+) and .NET (dotnet8+)** *(expanded Nov 2024)*
+## 9. Lambda@Edge ⭐ (vs SnapStart vs Managed Instances — don't confuse)
+
+**Plain English:** Run Lambda functions **at CloudFront edge locations**, close to the viewer, to customize content delivery — no servers to manage.
+
+Four CloudFront trigger points (memorize the order):
+1. **Viewer request** — after CloudFront gets the request from the user
+2. **Origin request** — before CloudFront forwards to the origin
+3. **Origin response** — after CloudFront gets the origin's response
+4. **Viewer response** — before CloudFront sends back to the user
+
+> **Hook:** *Viewer = nearest the user; Origin = nearest the backend. Request goes in (Viewer→Origin), Response comes out (Origin→Viewer).*
 
 ---
 
-## 💰 Pricing
-- **Number of requests**: first 1M free/month, then $0.20 per 1M
-- **Duration**: billed per 1ms of execution; first 400,000 GB-seconds free/month
-- **⚠️ NEW (Aug 2025)**: The **INIT (cold start) phase is now billed** at the same rate as execution time — important cost consideration for Java/.NET workloads with heavy initialization
-- Additional charges: Provisioned Concurrency, SnapStart, ECR image storage, VPC data transfer
+## 10. Lambda SnapStart
+
+**Plain English:** Speeds up cold starts by booting once, taking a **snapshot** of the initialized environment, then **resuming from that snapshot** for future invocations — no extra resources needed.
+
+- Originally **Java**; source notes support for **Java, Python, and .NET**.
+- Reduces cold-start latency **without** paying for Provisioned Concurrency.
+
+> 🪤 **Confusion alert — three cold-start fixes:**
+> - **Provisioned Concurrency** = keep instances warm (any runtime, costs $).
+> - **SnapStart** = resume from a snapshot (Java/Python/.NET, no provisioning).
+> - **Managed Instances** = pre-provisioned EC2 stays active (see below).
 
 ---
 
-## 📦 Deploying with External Dependencies
-1. Place all external libraries **locally in your project folder**
-2. **ZIP** the entire package (code + dependencies)
-3. Upload to Lambda directly (console) or via **S3** (for large packages)
-4. Alternatively, use **Lambda Layers** to separate shared dependencies
+## 11. Lambda Managed Instances 🆕 (likely too new for the exam — bonus)
+
+**Plain English:** Run Lambda functions on **specific EC2 instances** (incl. **GPUs**, **Graviton4**) that AWS still manages for you — bridges serverless simplicity with EC2 hardware control.
+
+- **Capacity Provider** = you define VPC config, EC2 instance types, scaling policies.
+- **Multiconcurrency** = one instance handles **multiple requests at once** (vs standard Lambda's one-request-per-environment).
+- AWS handles lifecycle, OS patching, load balancing, auto-scaling; you pick the hardware.
+- **Why:** access GPUs (AI/ML inference), high-memory; **no cold starts** (instances stay active); good for **predictable, high-volume** workloads.
+- **Pricing:** pay EC2 rates (Savings Plans/RIs eligible) + ~**15% management fee** + standard request charges ($0.20 / 1M). **No per-ms duration charge** — you pay for instance uptime.
 
 ---
 
-## 🆕 New Features & Updates (Not in Tutorial Dojo / Post-publication)
+## 12. Pricing & Free Tier 💰
 
-| Feature | Detail | Date |
-|---------|--------|------|
-| **SnapStart for Python & .NET** | Now supports `python3.12` and `dotnet8` — Tutorial Dojo only mentioned Java | Nov 2024 |
-| **Node.js 22.x runtime** | New managed runtime `nodejs22.x` now available | Nov 2024 |
-| **Python 3.13 runtime** | New managed runtime now available | Nov 2024 |
-| **KMS encryption for .zip packages** | Customer-managed key (CMK) encryption for deployment packages | Nov 2024 |
-| **Lambda Managed Instances** | Run Lambda on dedicated EC2 hardware (incl. GPUs, Graviton4) — AWS manages OS, patching, scaling. Supports **multiconcurrency** (multiple requests per instance). Pay for EC2 uptime + ~15% mgmt fee, no per-ms billing | Nov 2025 |
-| **Lambda Durable Functions** | Build **stateful workflows** that persist state for up to **1 year** — like Step Functions but natively in Lambda | Dec 2025 |
-| **Scaling rate doubled** | Now 1,000 new environments/10s (was 500) | 2025 |
-| **INIT phase now billed** | Cold start initialization time billed at execution rates | Aug 2025 |
-| **SQS Provisioned Mode ESM** | Pre-scale Lambda consumers before burst traffic hits | 2025 |
-| **Amazon Linux 2 End of Life** | AL2 runtimes (python3.11, java17, nodejs16.x) must migrate to AL2023 by **June 30, 2026** | — |
+**You're billed on:**
+- **Number of requests**
+- **Compute duration** (billed in **1 ms** increments)
+- **Memory configuration × duration** (GB-seconds)
 
----
+**Free tier (per month):**
+- **1 million** free requests
+- **400,000 GB-seconds** of compute
 
-## 🔁 Quick Recall: Sync vs Async vs Event Source Mapping
+**Extra charges apply to:** Provisioned Concurrency, SnapStart, ECR storage for container images, VPC networking data transfer.
 
-| | Sync | Async | Event Source Mapping |
-|--|------|-------|---------------------|
-| Caller waits? | ✅ Yes | ❌ No (202) | ❌ No (Lambda polls) |
-| Retries? | No (caller handles) | Yes (Lambda retries) | Yes |
-| Sources | API GW, ALB, Cognito | S3, SNS, EventBridge | SQS, Kinesis, DynamoDB |
-| Payload limit | 6 MB | 256 KB | 6 MB (batch) |
+> **Mental model:** *Cost ≈ (how often it runs) × (how long each run takes) × (how much memory you gave it).*
 
 ---
 
-## 🚨 Common Exam Traps
-- Lambda@Edge ≠ Lambda in a Region — runs **at CloudFront edge**, not in your VPC
-- Function URL auth type `NONE` = **publicly accessible** — not "unauthenticated IAM"
-- Reserved concurrency **caps** the function — it's a ceiling AND a guarantee
-- SnapStart is NOT the same as Provisioned Concurrency — SnapStart snaps init state; PC keeps warm environments alive
-- Async invocation returns 202 — this is a **queue confirmation**, NOT a success confirmation
-- Lambda can mount **EFS** (not EBS) — EBS is block storage for EC2, not Lambda
+## 13. Lambda vs Other Compute (common exam tie-breakers)
+
+| If the scenario says... | Pick |
+|--------------------------|------|
+| Short event-driven code, <15 min, scale to zero | **Lambda** |
+| Job runs **longer than 15 min** | **Fargate / ECS / EC2 / Batch** |
+| Long-running containers, full control | **ECS/EKS on EC2 or Fargate** |
+| Public HTTPS endpoint, no throttling/keys needed | **Lambda Function URL** |
+| Need throttling, API keys, usage plans, caching | **API Gateway + Lambda** |
+| Customize content at the edge | **Lambda@Edge (CloudFront)** |
+| Eliminate cold starts (any language, $$) | **Provisioned Concurrency** |
+| Reduce cold starts (Java/Python/.NET, free) | **SnapStart** |
+| GPU / heavy ML inference on Lambda | **Managed Instances** |
+
+---
+
+## 🕒 30-Second Final Recall
+
+- **Lambda = serverless, event-driven, stateless, auto-scaling; pay per request + per 1 ms.**
+- **Max timeout = 15 min.** Memory **128 MB–10 GB** (CPU scales with memory). /tmp **512 MB–10 GB**. Container image up to **10 GB**.
+- **Sync** = caller waits (**API GW, ALB, Cognito, Firehose, CloudFront/Lambda@Edge**). **Async** = 202 immediately, payload ≤ **256 KB** (**S3, EventBridge, CloudWatch Logs, Config, CFN**).
+- **Event Source Mapping** = Lambda *polls* streams/queues (**Kinesis, DynamoDB, SQS, MQ, MSK/Kafka**); batch flushes at size **OR** window **OR** **6 MB**.
+- **Reserved Concurrency** = guarantee + cap (capacity). **Provisioned Concurrency** = warm instances (kill cold starts, costs extra).
+- **SnapStart** = snapshot-resume cold-start fix for **Java/Python/.NET**, free.
+- **Function URL** = direct public HTTPS, auth **AWS_IAM** or **NONE**; public internet only (no PrivateLink). Need keys/throttling → **API Gateway**.
+- **VPC access** needs **subnet IDs + security group IDs** → Lambda makes **ENIs**.
+- **Lambda@Edge** = 4 hooks: viewer request → origin request → origin response → viewer response.
+- **Versions** = immutable snapshots; **Aliases** = movable pointers to versions.
+- **Free tier:** 1M requests + 400,000 GB-seconds/month.
