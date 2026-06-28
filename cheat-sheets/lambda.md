@@ -2,8 +2,6 @@
 
 > **What it is:** A serverless, event-driven compute service that runs your code in response to events and fully manages the servers for you — you upload code, it runs and scales automatically, and you pay only while it runs.
 
-> ⚠️ **Source freshness:** The Tutorials Dojo source was last updated **Dec 15, 2025** (recent). It includes the **new "Lambda Managed Instances"** feature, which is newer than most exam pools — likely *not* tested yet on SAA-C03. Treat it as bonus context. Want me to verify the Managed Instances details against current AWS docs before you rely on them?
-
 ---
 
 ## 1. The Big Picture (memorize these first)
