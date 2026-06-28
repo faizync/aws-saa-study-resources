@@ -1,353 +1,292 @@
-# 🖥️ AWS EC2 — SAA-C03 Exam Cheat Sheet
+# 🖥️ Amazon EC2 — SAA-C03 Cheat Sheet
+
+> **What it is:** Resizable virtual servers (Linux/Windows/Mac) you rent in the cloud, with full control over CPU, memory, storage, and networking. *Think: "rent a computer by the second."*
+
+> ⏱️ **Source freshness:** Based on Tutorials Dojo (last updated **Dec 20, 2025**). Core EC2 concepts are stable, so this is reliable for the exam. If you want me to double-check any specific limit or new feature against current AWS docs, just ask.
 
 ---
 
-## ⚡ Key Highlights
-- Virtual server (Linux / Windows / Mac-based) in the cloud
-- Runs on **AWS Nitro System** → offloads compute to dedicated hardware → near bare-metal performance
-- **Nitro Hypervisor** outperforms legacy Xen Hypervisor
-- Instance limits per region: **On-Demand** (vCPU-based), **20 Reserved**, **Spot** (dynamic limit)
+## 1. Foundations (Nitro, Instances, AMIs)
 
----
-
-## 🧩 EC2 Features — Quick Reference
-
-| Feature | What It Is |
+| Concept | Plain-English meaning |
 |---|---|
-| **AMI** | Reusable template (OS + apps) |
-| **Instance Types** | t/m = General, c = Compute, r/x/z/u = Memory, d/h/i = Storage, f/g/p/trn/inf/dl/vt = Accelerated, hpc = HPC |
-| **Key Pairs** | Secure login credentials |
-| **Security Groups** | Virtual firewall (instance level) |
-| **Elastic IP** | Static public IPv4 address |
-| **Instance Store** | Temporary storage — deleted on STOP/TERMINATE |
-| **EBS** | Persistent block storage |
-| **Tags** | Metadata (key-value) for resources |
-| **VPC** | Logically isolated virtual network |
-| **User Data** | Script run at instance boot (max 16 KB) |
-| **EC2 Instance Connect** | SSH (Linux) / RDP (Windows) without managing SSH keys |
-| **EC2 Attestation** | Uses NitroTPM to verify instance identity & software integrity |
+| **AWS Nitro System** | The modern hardware platform under EC2. It **offloads** hypervisor/networking/storage jobs to dedicated chips → performance is **indistinguishable from bare metal**, faster than the old Xen hypervisor. *Mental model: a butler handles all the chores so the server can focus 100% on your workload.* |
+| **Instance** | The running virtual server itself. |
+| **AMI (Amazon Machine Image)** | A reusable **template** (OS + apps + settings) used to launch instances. *Think: a "save file" you boot copies from.* |
+| **Instance type** | The hardware spec combo (CPU/mem/storage/network). E.g. `t3.micro`. |
+| **EC2 Instance Connect** | Connect via SSH/RDP **without managing your own SSH keys**. |
+| **EC2 Instance Attestation** | Uses NitroTPM to **cryptographically prove** the instance identity + software integrity (Attestable AMIs). *Shifts from "trust me" → "verify me."* |
+
+**Key highlights:** 30+ Regions & Local Zones · processor choice (Intel / AMD / **Graviton**) · verified boot via **NitroTPM** + VPC isolation.
 
 ---
 
-## 🔄 Instance States
+## 2. Instance Type Families (memorize the letters!)
 
-| State | Billed? | Storage Preserved? | Notes |
-|---|---|---|---|
-| **Start/Running** | ✅ Yes | ✅ EBS | Normal operation |
-| **Stop** | ❌ No | ✅ EBS / ❌ Instance Store | Can resize, change kernel, attach EBS |
-| **Hibernate** | ❌ No (EBS + EIP only) | ✅ RAM saved to EBS | Root EBS must be **encrypted** |
-| **Terminate** | ❌ No | ❌ Root EBS (deleted) / ✅ Other EBS | Cannot restart — permanent |
-
-- Enable **termination protection** to prevent accidental termination
-- Enable **stop protection** to prevent accidental stopping
-- Instance Store-backed → can only **start** or **terminate** (no stop!)
-- EBS-backed → can **stop, start, terminate, hibernate**
-
----
-
-## 💿 Root Device Volumes
-
-| Feature | EBS-backed | Instance Store-backed |
+| Category | Letters | Easy way to remember |
 |---|---|---|
-| **Boot time** | < 1 minute | < 5 minutes |
-| **Root size limit** | 64 TiB | 10 GiB |
-| **Data persistence** | Survives stop | Deleted on termination/failure |
-| **Stopped state** | ✅ Supported | ❌ Not supported |
-| **Modifications** | Type, kernel, RAM disk, user data (while stopped) | Fixed for life |
-| **Charges** | Instance + EBS + snapshot (S3) | Instance + S3 |
-| **OS support** | Linux + Windows | Linux only (**Windows does NOT support instance store root**) |
+| **General Purpose** | `t`, `m` | **"T/M = Team Member"** — balanced all-rounders |
+| **Compute Optimized** | `c` | **C = CPU** |
+| **Memory Optimized** | `r`, `x`, `z` | **R = RAM** (x, z = extra-large memory) |
+| **Storage Optimized** | `d`, `h`, `i` | **"DHI = Disk-Heavy I/O"** |
+| **Accelerated Computing** | `f`, `g`, `p`, `trn` (Trainium), `inf` (Inferentia) | **GPU/ML**: `g`/`p` = graphics/parallel, `trn`/`inf` = AI train/infer |
 
-- Can **replace root volume** of running instance (from: initial state, snapshot, or AMI)
-- EBS root volume **deleted by default** on termination
-- Can now launch **encrypted EBS instance directly from unencrypted AMI**
-- AWS recommends EBS-backed AMIs — launch faster and use persistent storage
+> 🎯 **Exam hook:** Need fast node-to-node compute for HPC/ML? → accelerated/compute types **+ Cluster placement group + EFA** (see §10/§12).
 
 ---
 
-## 🖼️ AMI
+## 3. Instance States
 
-- Contains: **root volume template + launch permissions + block device mapping**
-- Backed by **EBS** (snapshot-based) or **Instance Store** (S3-based)
-- **Regional** — tied to region; can be **copied across regions**
-- **Recycle Bin** — restore accidentally deleted AMIs; set lock retention rules
-- Public AMIs **deprecated after 2 years** from creation date
-- AMIs from Amazon/verified partners are marked as **verified provider** in console
-- **UEFI Secure Boot** — ensures instance only boots cryptographically signed software
-- Supports **IMDSv2** configuration
+| State | What happens | Billing | Notes |
+|---|---|---|---|
+| **Start** | Runs normally | Charged while running | — |
+| **Stop** | Normal shutdown; can restart anytime | **No usage charge** (still pay for EBS) | EBS volumes stay attached; **instance store data is LOST**. Can change type/kernel/RAM, attach/detach EBS, create AMI. |
+| **Hibernate** | Writes RAM → file on **root EBS**, then shuts down | Pay only for EBS + Elastic IPs (no hourly) | **Root EBS + AMI must be encrypted.** Resumes where you left off. |
+| **Terminate** | Permanent delete | None after | **Cannot restart.** Root volume deleted by default; other EBS preserved by default; instance store data lost. |
 
----
+**Protection toggles:**
+- **Termination protection** → blocks accidental terminate.
+- **Stop protection** → blocks accidental stop.
 
-## 🏗️ EC2 Image Builder
-- Fully managed service to **automate AMI creation, management & deployment**
-- Supports Console, CLI, API
-- Can set up **pipelines** for automated updates and system patching
-- Images created are **owned by you**
+> 🪤 **Trap:** Only **EBS-backed** instances can be **Stopped**. Instance Store-backed instances can only be **started or terminated** (no stop).
 
 ---
 
-## 💰 Pricing Models
+## 4. Storage Backing: Instance Store vs EBS-backed
 
-| Model | Key Facts |
-|---|---|
-| **On-Demand** | Pay per second, no commitment |
-| **Reserved (Standard)** | Up to **72% off**, 1 or 3 years, can sell in RI Marketplace |
-| **Reserved (Convertible)** | Up to **66% off**, can exchange for different attributes, **cannot** sell in RI Marketplace |
-| **Savings Plans** | Up to **72% off**, commit to $/hour usage, covers EC2 + Fargate + Lambda |
-| **Spot** | Up to **90% off**, can be interrupted by AWS |
-| **Dedicated Host** | Pay per physical host; BYOL support |
-| **Dedicated Instance** | Pay per hour on single-tenant hardware |
-| **Capacity Reservation** | Reserve capacity in specific AZ, no term commitment |
-
-### Reserved Instances — Regional vs Zonal
-
-| Feature | Regional RI | Zonal RI |
+| | **Instance Store-backed** | **EBS-backed** |
 |---|---|---|
-| Capacity reservation | ❌ No | ✅ Yes |
-| AZ flexibility | ✅ Any AZ in region | ❌ Specific AZ only |
-| Instance size flexibility | ✅ Within family | ❌ Specific size only |
-| Queue a purchase | ✅ Yes | ❌ No |
+| Data persistence | **Dies with the instance** (stop/terminate/fail = gone) | Survives stop; root deleted on terminate by default, other EBS persists |
+| Can be Stopped? | ❌ No (start/terminate only) | ✅ Yes |
+| Boot time | < 5 min | **< 1 min** |
+| Root device size limit | **10 GiB** | **64 TiB** |
+| AMI stored in | S3 | EBS snapshot |
+| Modify type/kernel/userdata? | ❌ Fixed for life | ✅ While stopped |
+| Charges | Instance + AMI in S3 | Instance + EBS + AMI snapshot |
 
-### Spot Instances
-- **Spot Blocks** — defined duration, designed not to be interrupted
-- **Spot Fleet** — collection of Spot + optional On-Demand instances
-- **Spot Capacity Pool** — same instance type + OS + AZ + network platform
-- **Rebalance Recommendation** — signal that instance is at elevated risk of interruption
-
-#### Spot Allocation Strategies
-- **PriceCapacityOptimized** — best of price + capacity (AWS **recommended** for most workloads)
-- **CapacityOptimized** — from pool with most available capacity (lowest interruption risk)
-- **LowestPrice** — from cheapest pool (**not recommended** — highest interruption risk)
-- **Diversified** — spread across all pools (Spot Fleet only)
-- **InstancePoolsToUseCount** — spread across N pools (used with LowestPrice only)
-
-### Capacity Reservations
-- No 1 or 3-year commitment needed
-- Specify: AZ, instance count, instance type, tenancy, platform/OS
-- Apply Savings Plans or Regional RIs for discounts
-- ✅ Can be created in **placement groups**
-- ❌ Cannot be used with **Dedicated Hosts**
+> **Easy way to remember:** *Instance store = scratchpad (fast, temporary). EBS = hard drive (persistent).*
 
 ---
 
-## 🔐 Security
+## 5. Root Device Volumes & AMIs
 
-- Use **IAM policies & roles** to control access
-- **Security Groups** = virtual firewall (instance level):
-  - **Stateful** — response traffic automatically allowed
-  - **Allow rules only** — no explicit deny rules
-  - Evaluates **ALL rules from ALL attached security groups**
-  - Default: allows all **outbound**, no **inbound**
-  - Default SG: allows all inbound from same SG + all outbound
-  - Rules apply immediately to all associated instances
-- **Disable password-based SSH logins** → use key pairs instead
-- Key pair formats: **.pem** and **.ppk**
-- Can **query public key and creation date** of key pairs
-- **EC2 Instance Connect & Serial Console** → support **ED25519** keys
-- **VPC Traffic Mirroring** → copy/replicate network traffic to security appliances for inspection, threat monitoring, troubleshooting
+**Root device volume** = the boot image of the instance. You can replace it on a running instance via: initial launch state, snapshot, or AMI.
+
+**An AMI contains:**
+1. Template for the root volume (OS, app server, apps)
+2. **Launch permissions** (which AWS accounts can use it)
+3. **Block device mapping** (which volumes attach at launch)
+
+**AMI extras worth knowing:**
+- You can launch **encrypted EBS-backed instances directly from unencrypted AMIs** now (no copy step needed).
+- AMIs are **Regional** — you can **copy** them across regions (data transfer charge applies).
+- **Recycle Bin** restores deleted AMIs; **lock retention rules** protect against deletion/modification.
+- **Public AMIs deprecate after 2 years** from creation by default.
+- AMI state changes emit **EventBridge** events → automate responses.
+- **UEFI Secure Boot** = only boots software signed with crypto keys.
+- Configure AMI to use **IMDSv2** (more secure metadata access).
+- `LastLaunchedTime` shows when an AMI was last used.
+
+### EC2 Image Builder
+> Fully-managed service that **automates building, patching, and deploying AMIs** via pipelines. *Think: a CI/CD assembly line for golden images.* Images it creates are **owned by you**.
 
 ---
 
-## 🌐 Networking
+## 6. Pricing — Purchase Options (BIG exam topic)
 
-| Feature | Key Detail |
+| Option | Plain-English | When to pick |
+|---|---|---|
+| **On-Demand** | Pay by the second, no commitment | Short, unpredictable, dev/test |
+| **Savings Plans** | Commit to **$/hour** for 1 or 3 yrs → up to **72% off**. Works for EC2, **Fargate, Lambda** | Steady overall usage, want flexibility across services |
+| **Reserved (RI)** | Commit to a specific instance for 1/3 yrs → big discount | Steady, predictable, known instance family |
+| **Spot** | Bid on spare capacity → up to **90% off**, but can be interrupted | Fault-tolerant, flexible (batch, CI, rendering) |
+| **Dedicated Host** | Pay for a **whole physical server** | **BYOL** (per-socket/per-core/per-VM licenses) + compliance |
+| **Dedicated Instance** | Single-tenant hardware, billed hourly | Isolation but no license-binding control |
+| **On-Demand Capacity Reservation** | Reserve capacity in an AZ, **no 1/3-yr term** | Guarantee capacity (e.g., for a known event) without long commitment |
+
+> 🪤 **Classic trap — Dedicated Host vs Dedicated Instance:**
+> - **Dedicated Host** = you see/control the **physical sockets & cores** → required to **use existing server-bound (BYO) software licenses** + meet compliance.
+> - **Dedicated Instance** = isolated hardware but **no visibility into sockets/cores** → can't do per-socket BYOL.
+> *If a question mentions "existing/server-bound licenses" → **Dedicated Host**.*
+
+### Reserved Instances: Standard vs Convertible
+
+| | **Standard RI** | **Convertible RI** |
+|---|---|---|
+| Discount (1 yr / 3 yr) | **40% / 60%** (bigger) | **31% / 54%** (smaller) |
+| Change AZ, instance size (Linux), networking type | ✅ | ✅ |
+| Change **instance family, OS, tenancy, payment option** | ❌ | ✅ |
+| Sell in **RI Marketplace** | ✅ | ❌ |
+
+> **Remember:** **Standard = Stronger discount, Stiff** (limited changes). **Convertible = Changeable, Cheaper discount.**
+
+### Reserved Instances: Regional vs Zonal
+
+| | **Regional RI** | **Zonal RI** |
+|---|---|---|
+| **Reserve capacity** | ❌ No | ✅ **Yes** |
+| AZ flexibility | ✅ Any AZ in the Region | ❌ Only the specified AZ |
+| Instance size flexibility | ✅ Across the family | ❌ Specific type+size only |
+| Queue a purchase | ✅ | ❌ |
+
+> **Hook:** Need a **capacity guarantee** → **Zonal** RI (or a Capacity Reservation). Want **flexibility** → **Regional** RI.
+
+---
+
+## 7. Spot Instances Deep-Dive
+
+| Term | Meaning |
 |---|---|
-| **Elastic IP (EIP)** | Static IPv4, region-specific, **5 per region** default limit |
-| **EIP Transfer** | Transfer between accounts in **same region**, 7-day acceptance window, tags reset, no charge |
-| **Primary ENI (eth0)** | Auto-created, **cannot be detached** |
-| **Secondary ENIs** | Can be attached/detached (hot/warm/cold), max count varies by instance type |
-| **Bastion Host** | Jump box for SSH/RDP into private VPC instances |
+| **Spot Instance** | Spare capacity at up to 90% off; can be interrupted when AWS needs it back, price exceeds your max, or demand rises. |
+| **Spot block (defined duration)** | Designed **NOT to be interrupted** — runs continuously for a set duration. Good for finite jobs (batch, encoding, CI). |
+| **Spot Fleet** | A collection of Spot (+ optional On-Demand) instances aiming for a **target capacity**; auto-maintains it if instances drop. |
+| **Spot Capacity pool** | Set of unused instances with the **same type, OS, AZ, network platform**. |
+| **Rebalance recommendation** | Signal that a running Spot instance is at **elevated risk of interruption** (act before it's gone). |
 
-- Instance in **public subnet** → gets public + private IP
-- Instance in **private subnet** → private IP only (need EIP for internet)
-- ENI attributes (private IP, EIP, MAC address) **follow the ENI** when moved
-- Attaching multiple ENIs does **NOT double bandwidth**
-- Can attach ENI from different subnet if **same AZ**
-- Default ENIs terminated with instance termination
+**Spot Allocation Strategies:**
 
-### Enhanced Networking (SR-IOV)
-- **Higher bandwidth, higher PPS, lower latency**
-- Bypasses hypervisor → talks directly to NIC hardware
-- **No additional charge**
-- Two mechanisms:
-  - **ENA (Elastic Network Adapter)** → up to **100 Gbps** (all Nitro instances)
-  - **Intel 82599 VF** → up to **10 Gbps** (older: C3, C4, D2, I2, M4, R3)
-- **T2 instances do NOT support Enhanced Networking**
+| Strategy | Behavior |
+|---|---|
+| **LowestPrice** (default) | From the cheapest pool |
+| **Diversified** | Spread across **all** pools (resilience) |
+| **CapacityOptimized** | From pool with **optimal capacity** (fewest interruptions) |
+| **InstancePoolsToUseCount** | Spread across **N pools you specify** (only valid with lowestPrice) |
 
-### Elastic Fabric Adapter (EFA)
-- Network device for **AI, ML, and HPC** workloads
-- **OS-bypass** via **Libfabric API** → skips kernel, talks directly to hardware
-- Uses **SRD (Scalable Reliable Datagram)** protocol (not TCP)
-- Lower & more consistent latency, higher throughput than TCP
-- EFA = **ENA + OS-bypass** (superset of ENA)
-- Works with: **NCCL/NIXL** (ML/AI), **Open MPI / Intel MPI** (HPC)
-- EFA traffic **cannot cross AZs or VPCs**
-- **No additional charge**
-- ❌ Not supported on AWS Outposts
-- Always pair with **Cluster Placement Group** for max performance
+**Spot vs On-Demand quick contrast:** Spot price **fluctuates** with demand & auto-retries launch when capacity returns; On-Demand price is **static** and throws an **ICE (Insufficient Capacity Error)** if no capacity. You control when On-Demand stops/terminates; AWS may interrupt Spot.
 
-### Load Balancer Types (ELB)
+---
 
-| Type | Layer | Protocol | Use Case |
+## 8. Security
+
+- Control access with **IAM** (policies + roles). Restrict to trusted hosts/networks.
+- **Security Group = virtual firewall** for instances:
+  - **Stateful** (return traffic auto-allowed).
+  - Rules are **permissive only** — you **cannot create deny rules**.
+  - **All outbound allowed by default.**
+  - AWS **evaluates all rules from all SGs** attached to an instance.
+  - New rules apply to **all associated instances immediately**.
+  - No SG specified at launch → gets the VPC's **default SG** (allows traffic from instances in the same default SG + all outbound).
+- **Disable password logins** on custom AMIs (passwords get cracked).
+- **Traffic Mirroring**: copy an instance's network traffic to security/monitoring appliances for inspection.
+- Key pairs: choose format **.pem** (OpenSSH) or **.ppk** (PuTTY); **ED25519** keys supported for Instance Connect & Serial Console; can query public key + creation date.
+
+---
+
+## 9. Networking
+
+| Item | Key facts |
+|---|---|
+| **Elastic IP (EIP)** | Static **IPv4** you can **remap** to another instance to mask failure. **Region-specific.** Default **5 per region**. **Transferable** between accounts. |
+| **EIP charging trap** 🪤 | AWS charges a **small hourly fee when an EIP is NOT associated** with a running instance (or attached to a stopped instance / unattached ENI), and for **extra** EIPs on an instance. *Idle = you pay.* |
+| **Default IPs** | Private subnet → private IP only. Public subnet → public + private IP. |
+| **ENI (Elastic Network Interface)** | Virtual network card. **Primary ENI (eth0) cannot be detached.** Can attach extra ENIs (max varies by type). Can attach an ENI to an instance in a **different subnet but same AZ**. |
+| **Bastion host / jump box** | An instance used to securely SSH/RDP into private VPC instances. |
+| **Enhanced Networking** | Higher bandwidth, higher PPS, lower latency via **SR-IOV**. Used in placement groups. |
+| **Elastic Fabric Adapter (EFA)** | Special device for **HPC & ML** — ultra-low latency, high throughput for **inter-instance** communication. *Think: the racing tire for tightly-coupled clusters.* |
+
+> 🪤 **EFA vs Enhanced Networking:** Both boost networking, but **EFA** is the one for **HPC/ML tightly-coupled** workloads (OS-bypass). Enhanced Networking (SR-IOV) is the general high-perf baseline.
+
+---
+
+## 10. Placement Groups
+
+| Type | What it does | Use when | Memory hook |
 |---|---|---|---|
-| **ALB** | 7 | HTTP/HTTPS | Web apps, microservices, path-based routing |
-| **NLB** | 4 | TCP/UDP/TLS | Low latency, gaming, IoT; supports **static IP** |
-| **GLB** | 3 | IP | Firewalls, DPI, 3rd party security appliances |
-| **CLB** | 4+7 | HTTP/HTTPS/TCP | Legacy only |
+| **Cluster** | Packs instances **close together in ONE AZ** → lowest latency, highest throughput | HPC, tightly-coupled node-to-node | **"Cluster = Close & fast"** |
+| **Spread** | Spreads instances onto **separate hardware** | Small # of **critical** instances kept apart | **"Spread = Safe/separate"** (max **7 per AZ per group**; can span multiple AZs) |
+| **Partition** | Groups into **logical partitions** on different hardware racks | Large distributed/replicated apps (HDFS, HBase, Cassandra) | **"Partition = big data, fault isolation"** |
 
-- ALB does **NOT** preserve client IP or support static IPs
-- NLB **preserves** client IP and supports **static/Elastic IPs**
-- ASG auto-registers new instances with attached ELB
-- No charge for ASG itself — pay only for EC2 instances launched
+> 🎯 **Exam answer:** *Low-latency for tightly-coupled HPC across instances* → **Cluster placement group in a single AZ** (NOT spread, NOT multi-AZ/multi-region).
+
+**Placement group rules:** name unique per account per region · **can't merge** groups · an instance is in **one group at a time** · **`host` tenancy can't** be in a placement group.
 
 ---
 
-## 📊 Monitoring
+## 11. Monitoring
 
-- **CloudWatch** — default metrics every **5 minutes**; enable **Detailed Monitoring** for **1-minute** intervals
-- **System Status Checks** — AWS infrastructure (requires AWS to fix)
-- **Instance Status Checks** — software/network config (requires YOU to fix)
-- **CloudWatch Alarms** — watch metric, trigger action on threshold
-- **CloudWatch Events** — automate responses to system events
-- **CloudWatch Logs** — collect logs from EC2, CloudTrail, other sources
-
-#### What to Monitor
-- Via EC2 metrics: CPU, Network, Disk performance, Disk reads/writes
-- Via **CloudWatch agent**: Memory, disk swap, disk space, page file, logs
+- **What to monitor with built-in EC2 metrics:** CPU, network, disk performance, disk reads/writes.
+- **Needs a CloudWatch agent (NOT default):** **memory utilization, disk swap, disk space, page file, logs.** *Trap: memory & disk-space are NOT in default metrics.*
+- **Status checks:**
+  - **System Status Check** → AWS-side problem (needs AWS to fix).
+  - **Instance Status Check** → your instance's software/network config (needs **you** to fix).
+- **CloudWatch:** Alarms (act on a metric vs threshold) · Events (auto-respond to system events) · Logs (collect log files).
+- **Default metric interval = 5 minutes.** Enable **detailed monitoring = 1 minute.**
 
 ---
 
-## 📋 Instance Metadata & User Data
+## 12. Instance Metadata & User Data
 
-- Metadata URL: `http://169.254.169.254/latest/meta-data/`
-- User Data URL: `http://169.254.169.254/latest/user-data`
-- IPv6 IMDS endpoint: `http://[fd00:ec2::254]` (Nitro-based instances only)
-- **NOT** protected by cryptographic methods
-- **IMDSv2** (recommended) — session-oriented, requires token via PUT request first; more secure than IMDSv1
-- User data types: **shell scripts** and **cloud-init directives**
-- User data limit: **16 KB** (raw, before base64 encoding) ✅ confirmed official docs
-- Modifying user data while stopped → **NOT executed on restart** (Linux); Windows can be configured to run on restart
-- Instance **tags** accessible from metadata (must be explicitly enabled)
-- ASG instances → metadata includes **target lifecycle state**
+| | Metadata | User Data |
+|---|---|---|
+| What | Data **about** the instance (config/management) | A **boot script** that runs at launch (shell or cloud-init) |
+| Endpoint | `http://169.254.169.254/latest/meta-data/` | `http://169.254.169.254/latest/user-data` |
+| Limit | — | **16 KB** |
 
----
-
-## 📦 Placement Groups
-
-| Type | Goal | AZ Span | Limit | Use Case |
-|---|---|---|---|---|
-| **Cluster** | Max performance / lowest latency | ❌ Single AZ only | No hard limit | HPC, ML, Big Data (tightly coupled) |
-| **Spread** | Max fault isolation | ✅ Multiple AZs | **7 instances per AZ** | Small group of critical instances |
-| **Partition** | Fault isolation at scale | ✅ Multiple AZs | **7 partitions per AZ** | Hadoop, Kafka, Cassandra |
-
-### Placement Group Rules
-- Name must be **unique within AWS account per region**
-- **Cannot merge** placement groups
-- Instance can be in **only one** placement group at a time
-- **Dedicated Hosts (tenancy=host)** → ❌ **cannot** be launched in placement groups
-- **Dedicated Instances** → ❌ cannot use **Spread** PG; Partition PG limited to **2 partitions**
-- Cannot launch **Spot Instances configured to stop/hibernate on interruption** in PGs
-- **No charge** for creating placement groups
-- Cluster PG: up to **10 Gbps single-flow** (vs 5 Gbps outside PG)
-- Internet traffic from Cluster PG limited to **5 Gbps**
-- Max **500 placement groups per region**
+- **Neither is encrypted** — don't put secrets in user data.
+- 🪤 **Trap:** If you **stop → edit user data → start**, the updated user data **does NOT re-run** on start (only runs at first launch).
+- Instance **tags** and (with Auto Scaling) the **target lifecycle state** are accessible from metadata.
 
 ---
 
-## 💾 Storage
+## 13. Storage Options Summary
 
-| Storage | Type | Persistence | Notes |
-|---|---|---|---|
-| **EBS** | Block | ✅ Persistent | AZ-specific; snapshots to S3 |
-| **Instance Store** | Block | ❌ Temporary | Deleted on stop/terminate |
-| **EFS** | File | ✅ Persistent | Shared across multiple instances |
-| **FSx for Windows** | File | ✅ Persistent | Windows Server-based |
-| **FSx for Lustre** | File | ✅ Persistent | High-performance file system |
-| **FSx for NetApp ONTAP** | File | ✅ Persistent | NetApp ONTAP-based |
-| **FSx for OpenZFS** | File | ✅ Persistent | OpenZFS-based |
-| **S3** | Object | ✅ Persistent | EBS snapshots, Instance Store AMIs |
+| Storage | Use it for |
+|---|---|
+| **EBS** | Durable block storage for an instance; frequent granular updates. Snapshot → stored in **S3**, restore to a new volume/instance. |
+| **Instance Store** | Temporary block storage; **dies with the instance**. |
+| **EFS** | Scalable **shared file** storage mountable by **many instances** at once (Linux). |
+| **FSx** | Windows File Server (SMB), **Lustre** (HPC), NetApp ONTAP, OpenZFS. |
+| **S3** | Object storage; holds EBS snapshots & instance-store AMIs. |
 
-### Torn Write Prevention (TWP)
-- Block storage feature for **I/O-intensive relational databases** (MySQL, MariaDB)
-- Eliminates need for **doublewrite buffer** → writes are all-or-nothing at hardware level
-- Performance gains: up to **+30% TPS**, up to **-50% write latency**
-- Supports block sizes: **4 KiB, 8 KiB, 16 KiB**
-- Works on **all EBS volumes on Nitro instances**; **enabled by default**
-- Must configure MySQL/MariaDB to disable doublewrite buffer to benefit
-- Also available on **RDS** as **"RDS Optimized Writes"**
-- **No additional cost**
+> **Torn write prevention** (block storage feature) boosts I/O-intensive relational DB performance without sacrificing resiliency.
 
 ---
 
-## 🗂️ EC2 Resources — Regional vs Global vs AZ
+## 14. Resource Scope (Global / Regional / AZ)
 
 | Resource | Scope |
 |---|---|
-| AWS Account | Global |
-| Key Pairs | Regional (or upload to make global) |
-| AMIs | Regional (can copy across regions) |
-| Elastic IP Addresses | Regional |
-| Security Groups | Regional |
-| EBS Snapshots | Regional (can copy across regions) |
-| EC2 Resource IDs | Regional |
-| **EBS Volumes** | **Availability Zone** |
-| **Instances** | **Availability Zone** (ID is regional) |
+| AWS account | **Global** |
+| Key pairs | Global *or* Regional (created per region; upload to each region to "globalize") |
+| AMIs, EIPs, Security Groups, EBS **snapshots**, resource IDs, resource names | **Regional** |
+| **EBS volumes**, **Instances** | **Availability Zone** (instance **ID** is regional) |
+
+> **Hook:** *Volumes & instances live in an AZ; almost everything else is regional; only the account is global.* You can **copy** AMIs and snapshots across regions.
 
 ---
 
-## 🐳 ECS Extensions (Bonus)
+## 15. ECS Extensions on EC2 (know the concept)
 
-### ECS Anywhere
-- Run ECS tasks on **on-premises** infrastructure
-- Install **SSM Agent + ECS Container Agent** → recognized as "External Instances"
-- Use cases: data sovereignty, edge computing, maximizing on-prem investments
-
-### ECS Service Connect
-- Simplifies **service-to-service communication** for containerized apps (EC2 + Fargate)
-- No need for separate proxy (e.g. App Mesh)
-- Features: **Service Discovery** (reliable names), **Traffic Engineering** (auto retries, connection draining), **Observability** (metrics in ECS console)
+- **ECS Anywhere** — Run ECS tasks on **on-premises** servers using the same ECS control plane. Install **SSM Agent + ECS Container Agent**; AWS treats them as **"External Instances."** Use: data sovereignty, edge/local processing, reuse existing on-prem hardware.
+- **ECS Service Connect** — Simplifies **service-to-service** comms, traffic management, and observability (EC2 **and** Fargate) **without** running a separate proxy/App Mesh. Gives service discovery (stable names like `http://payment-service`), auto-retries/connection draining, and built-in traffic metrics.
 
 ---
 
-## 🧠 EC2 Hibernation
-- Saves **in-memory (RAM) state** to root EBS volume, then shuts down
-- Requirements: **encrypted root EBS volume** (EBS encryption by default, or single-step encryption at launch)
-- Root EBS volume must be large enough to store RAM contents
-- Supported instance families include: **M3–M8, T2–T4g, C3–C8, R3–R8, I3, I3en** and many more current gen
-- Supported OS: Amazon Linux, Amazon Linux 2, AL2023, Ubuntu (18.04+), Windows Server (2012+), and others
-- RAM limits: **Linux → max 150 GiB**, **Windows → max 16 GiB**
-- Must be **enabled at launch** — cannot enable on existing running/stopped instance
-- **Cannot hibernate** instances in Auto Scaling groups or used by ECS
-- **Cannot hibernate** instances configured with UEFI Secure Boot
-- While hibernated: pay only for **EBS + Elastic IPs** (no hourly instance charge)
-- Resume using: **start-instances** command (same as normal start)
-- Can hibernate for up to **60 days**
+## 16. Misc. facts worth a point
+
+- Default limits: **On-Demand** by **vCPU-based limit**, **20 Reserved Instances**, **Spot** by dynamic regional limit.
+- **Host Recovery** auto-restarts instances on a new host after **Dedicated Host** hardware failure.
+- **EC2 Hibernation** supported on freshly launched **M3/M4/M5, C3/C4/C5, R3/R4/R5** running **Amazon Linux & Ubuntu 18.04 LTS**; requires **encrypted EBS-backed** instance.
+- You can allow **automatic connection of EC2 instances to an RDS database**.
+- Capacity Reservations: can be in **placement groups**, **can't** be used with **Dedicated Hosts**, monitored in CloudWatch; pair with **Savings Plans / regional RIs** for billing discounts.
+- Cross-region data transfer is billed as **"Data Transfer Out"** (source) + **"Data Transfer In"** (destination).
 
 ---
 
-## 🎯 Quick Exam Decision Guide
+## ⚡ 30-Second Final Recall
 
-| Scenario | Answer |
-|---|---|
-| BYOL (per-socket/per-core licensing) | **Dedicated Host** |
-| Physical isolation, compliance | **Dedicated Host or Dedicated Instance** |
-| Lowest cost, fault-tolerant workload | **Spot Instances** |
-| Predictable workload, 1-3 years | **Reserved Instances** |
-| Flexible commitment across services | **Savings Plans** |
-| HPC / ML distributed training | **EFA + Cluster Placement Group** |
-| Lowest latency between instances | **Cluster Placement Group** |
-| Hadoop / Kafka / Cassandra resilience | **Partition Placement Group** |
-| Few critical instances, max isolation | **Spread Placement Group** |
-| Replicate/inspect network traffic | **VPC Traffic Mirroring** |
-| Web app HTTP routing, microservices | **ALB** |
-| Ultra-low latency, static IP, gaming | **NLB** |
-| 3rd party firewall / deep packet inspection | **GLB** |
-| MySQL/MariaDB performance boost | **Torn Write Prevention** |
-| Instance fails, keep same IP instantly | **Move Secondary ENI** to standby |
-| SSH without managing keys | **EC2 Instance Connect** |
-| Connect to instance without open ports | **Session Manager (SSM)** |
-| Basic network metadata logging | **VPC Flow Logs** |
-| Full packet content inspection | **VPC Traffic Mirroring** |
-
----
-
-*✅ All points verified against official AWS documentation (docs.aws.amazon.com) — June 2026*
+- **Nitro** = near bare-metal perf (offloads to dedicated hardware).
+- **Only EBS-backed instances can Stop;** instance store = start/terminate only & data dies.
+- **Hibernate** = RAM→encrypted root EBS; needs encrypted AMI + root.
+- **Boot:** EBS < 1 min, instance store < 5 min. **Root size:** EBS 64 TiB, instance store 10 GiB.
+- **Pricing:** Savings Plans up to **72%**, Spot up to **90%**, RI Standard 1/3yr = **40/60%**, Convertible = **31/54%**.
+- **Standard RI** = bigger discount + sellable; **Convertible** = changeable family/OS.
+- **Zonal RI / Capacity Reservation = reserve capacity;** Regional RI = flexible, no capacity reservation.
+- **Dedicated HOST** = BYO server-bound licenses + see sockets/cores (Dedicated *Instance* can't).
+- **Cluster PG** = low-latency single-AZ HPC; **Spread** = critical apart (max 7/AZ); **Partition** = big distributed data.
+- **EFA** = HPC/ML tightly-coupled networking; **Enhanced Networking** = SR-IOV baseline.
+- **Security Groups:** stateful, allow-only (no deny), all outbound open by default.
+- **EIP:** static IPv4, 5/region, **charged when idle/unassociated.**
+- **Metadata** at `169.254.169.254`; **user data ≤ 16 KB**, runs at launch only (not on stop→start).
+- **Default monitoring = 5 min**, detailed = 1 min; **memory & disk-space need the CloudWatch agent.**
+- **Volumes & instances = AZ-scoped;** AMIs/snapshots/SGs/EIPs = Regional; account = Global.
