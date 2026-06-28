@@ -34,6 +34,7 @@
 |---|---------|-------------|
 | 1 | 🖥️ Amazon EC2 | [View Notes](./cheat-sheets/ec2.md) |
 | 2 | 🌱 AWS Elastic Beanstalk | [View Notes](./cheat-sheets/elastic-beanstalk.md) |
+| 3 | ⚡ AWS Lambda | [View Notes](./cheat-sheets/lambda.md) |
 
 ---
 
